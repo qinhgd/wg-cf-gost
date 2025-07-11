@@ -50,4 +50,4 @@ jobs:
           # 要上传的文件的路径
           path: /tmp/docker_image.tar
           # 产物保留时间（天）
-          retention-days: 999
+          retention-days: 30
