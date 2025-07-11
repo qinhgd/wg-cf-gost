@@ -1,7 +1,7 @@
 # 工作流名称
 name: Build and Upload Release Asset
 
-# 【重要】触发条件：仅当一个新的 Release 被创建时运行
+# 触发条件：仅当一个新的 Release 被创建时运行
 on:
   release:
     types: [created]
@@ -12,6 +12,10 @@ jobs:
     # 运行环境
     runs-on: ubuntu-latest
     
+    # ---【重要修正】授予工作流向仓库写入内容的权限 ---
+    permissions:
+      contents: write
+
     # 任务步骤
     steps:
       # 1. 检出与 Release 对应的标签的代码
@@ -34,23 +38,16 @@ jobs:
           file: ./Dockerfile.alpine
           platforms: linux/arm64
           push: false
-          # 将构建结果输出为一个 docker 格式的 .tar 文件
           outputs: type=docker,dest=./gost-proxy-arm64.tar
-          # 为镜像打上标签，使用 Release 的标签名作为版本号
           tags: my-gost-proxy:${{ github.event.release.tag_name }}
 
-      # 5. 【新增】上传镜像 .tar 文件作为 Release 的附件 (Asset)
+      # 5. 上传镜像 .tar 文件作为 Release 的附件 (Asset)
       - name: Upload Release Asset
         uses: actions/upload-release-asset@v1
         env:
-          # 这个令牌是 GitHub Actions 自动提供的，有上传权限
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # 自动获取触发本次工作流的 Release 的上传地址
           upload_url: ${{ github.event.release.upload_url }}
-          # 要上传的文件的路径
           asset_path: ./gost-proxy-arm64.tar
-          # 在 Release 页面显示的附件名称
           asset_name: gost-proxy-arm64-${{ github.event.release.tag_name }}.tar
-          # 附件的文件类型
           asset_content_type: application/x-tar
