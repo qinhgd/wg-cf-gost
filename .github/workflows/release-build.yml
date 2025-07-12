@@ -1,7 +1,7 @@
 # 工作流名称
 name: Build and Upload Release Asset
 
-# 触发条件：仅当一个新的 Release 被创建时运行
+# 触发条件
 on:
   release:
     types: [created]
@@ -12,17 +12,17 @@ jobs:
     # 运行环境
     runs-on: ubuntu-latest
     
-    # ---【重要修正】授予工作流向仓库写入内容的权限 ---
+    # 【重要】授予工作流写入权限
     permissions:
       contents: write
 
     # 任务步骤
     steps:
-      # 1. 检出与 Release 对应的标签的代码
+      # 1. 检出代码
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 设置 QEMU (用于跨平台构建)
+      # 2. 设置 QEMU
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -38,16 +38,13 @@ jobs:
           file: ./Dockerfile.alpine
           platforms: linux/arm64
           push: false
+          # 【重要】将构建结果输出到这个固定的文件名
           outputs: type=docker,dest=./gost-proxy-arm64.tar
           tags: my-gost-proxy:${{ github.event.release.tag_name }}
 
-      # 5. 上传镜像 .tar 文件作为 Release 的附件 (Asset)
+      # 5. 【已更换】使用新工具上传镜像 .tar 文件作为 Release 的附件
       - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./gost-proxy-arm64.tar
-          asset_name: gost-proxy-arm64-${{ github.event.release.tag_name }}.tar
-          asset_content_type: application/x-tar
+          # 要上传的文件列表
+          files: gost-proxy-arm64.tar
