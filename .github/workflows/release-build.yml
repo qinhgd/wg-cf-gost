@@ -1,50 +1,84 @@
 # 工作流名称
-name: Build and Upload Release Asset
+name: Build, Push to GHCR, and Upload Release Asset
 
-# 触发条件
+# 触发条件：当一个新的 Release 被创建时运行
 on:
   release:
     types: [created]
 
 # 任务
 jobs:
-  build-and-attach:
+  build-push-and-attach:
     # 运行环境
     runs-on: ubuntu-latest
     
     # 【重要】授予工作流写入权限
+    # contents: write 用于上传 Release 附件
+    # packages: write 用于推送到 GitHub Container Registry
     permissions:
       contents: write
+      packages: write
 
     # 任务步骤
     steps:
       # 1. 检出代码
+      # 拉取你的仓库代码到运行器中
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 设置 QEMU
+      # 2. 【新增】登录到 GitHub Container Registry (GHCR)
+      # 这是将 Docker 镜像推送到 GHCR 的必要步骤
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          # github.actor 是触发工作流的用户名
+          # GITHUB_TOKEN 是由 GitHub Actions 自动创建的秘密令牌
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3. 设置 QEMU
+      # 用于进行跨平台构建（例如在 x86 服务器上构建 ARM64 镜像）
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      # 3. 设置 Docker Buildx
+      # 4. 设置 Docker Buildx
+      # 一个 Docker 的高级构建工具，支持多平台构建等功能
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 4. 构建镜像并输出为 .tar 文件
-      - name: Build Docker image and save to file
+      # 5. 【新增】从标签中提取元数据（镜像名和标签）
+      # 这个步骤会自动生成符合 GHCR 规范的镜像标签
+      # 例如：ghcr.io/your-username/your-repo:v1.0.0
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+
+      # 6. 【已修改】构建、推送并保存为 .tar 文件
+      # 这一步会同时做三件事：
+      #   a. 构建镜像
+      #   b. 将其推送到 GHCR (push: true)
+      #   c. 将其导出为一个 .tar 文件 (outputs)
+      - name: Build, push Docker image, and save to file
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile.alpine
           platforms: linux/arm64
-          push: false
-          # 【重要】将构建结果输出到这个固定的文件名
-          outputs: type=docker,dest=./gost-proxy-arm64.tar
-          tags: my-gost-proxy:${{ github.event.release.tag_name }}
+          # 【修改】设置为 true，推送到 GHCR
+          push: true
+          # 【修改】使用上一步生成的元数据作为标签
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 【保留】同时将构建结果输出为 .tar 文件，用于附件上传
+          outputs: type=docker,dest=./image-arm64.tar
 
-      # 5. 【已更换】使用新工具上传镜像 .tar 文件作为 Release 的附件
+      # 7. 上传 .tar 文件作为 Release 的附件
+      # 使用 softprops/action-gh-release 工具来完成上传
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
           # 要上传的文件列表
-          files: gost-proxy-arm64.tar
+          files: ./image-arm64.tar
