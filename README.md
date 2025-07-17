@@ -1,4 +1,6 @@
 好的，我们来整理一份最终的、完整的项目文档，包含我们讨论过的所有最终版脚本和完整操作流程，以便您备份。
+docker run -d    --name wgcf-gost    --restart unless-stopped    --sysctl net.ipv6.conf.all.disable_ipv6=0    --privileged --cap-add net_admin    -v /lib/modules:/lib/modules    -v /opt/wgcf-data:/wgcf    -p 1080:1080    -p 8080:8080    -e HTTP_PORT=8080    my-gost-proxy:latest -4
+
 
 这应该是您需要的最后一份文档了。
 
