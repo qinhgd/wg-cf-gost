@@ -1,11 +1,14 @@
 #!/bin/sh
 set -e
 
-# ==============================================================================
-# 脚本配置
-# ==============================================================================
-BEST_IP_FILE="/wgcf/best_ips.txt"
-RECONNECT_FLAG_FILE="/wgcf/reconnect.flag"
+# ============ 颜色函数 ============
+red() { echo -e "\033[31m\033[01m$1\033[0m"; }
+yellow() { echo -e "\033[33m\033[01m$1\033[0m"; }
+green() { echo -e "\033[32m\033[01m$1\033[0m"; }
+
+# ============ 变量配置 ============
+BEST_IP_FILE="./best_ips.txt"
+RECONNECT_FLAG_FILE="./reconnect.flag"
 OPTIMIZE_INTERVAL="${OPTIMIZE_INTERVAL:-21600}"
 WARP_CONNECT_TIMEOUT="${WARP_CONNECT_TIMEOUT:-5}"
 BEST_IP_COUNT="${BEST_IP_COUNT:-20}"
@@ -14,44 +17,80 @@ MAX_FAILURES="${MAX_FAILURES:-10}"
 HEALTH_CHECK_TIMEOUT="${HEALTH_CHECK_TIMEOUT:-5}"
 HEALTH_CHECK_RETRIES="${HEALTH_CHECK_RETRIES:-3}"
 
-# ==============================================================================
-# 工具函数
-# ==============================================================================
-red() { echo -e "\033[31m\033[01m$1\033[0m"; }
-green() { echo -e "\033[32m\033[01m$1\033[0m"; }
-yellow() { echo -e "\033[33m\033[01m$1\033[0m"; }
+# ============ 进入工作目录 ============
+cd /wgcf
 
-# ==============================================================================
-# IP优选相关函数
-# ==============================================================================
+# ============ 自动注册账号 ============
+if [ ! -s wgcf-account.toml ]; then
+    yellow "⚠️ 未检测到有效的 wgcf-account.toml，尝试自动注册..."
+    if wgcf register --accept-tos; then
+        green "✅ 自动注册成功！"
+        cp -f wgcf-account.toml wgcf-account.toml.bak
+        green "💾 wgcf-account.toml 已备份为 wgcf-account.toml.bak，请及时备份该文件到安全位置。"
+        green "ℹ️ 如果你想在其他环境或重新部署时复用账号文件，务必保存好此文件。"
+    else
+        red "❌ 自动注册失败，请检查网络或手动执行 wgcf register。"
+        exit 1
+    fi
+fi
+
+# ============ 生成 WireGuard 配置 ============
+if [ ! -s wgcf-profile.conf ]; then
+    yellow "🛠️ wgcf-profile.conf 不存在，开始生成..."
+    wgcf generate
+    green "✅ wgcf-profile.conf 生成完成。"
+fi
+
+cp wgcf-profile.conf /etc/wireguard/wgcf.conf
+
+# ============ 根据参数屏蔽IPv4或IPv6 ============
+if [ "$1" = "-6" ]; then
+    sed -i 's/AllowedIPs = 0.0.0.0\/0/#AllowedIPs = 0.0.0.0\/0/' /etc/wireguard/wgcf.conf
+elif [ "$1" = "-4" ]; then
+    sed -i 's/AllowedIPs = ::\/0/#AllowedIPs = ::\/0/' /etc/wireguard/wgcf.conf
+fi
+
+# ============ IP 优选函数 ============
 run_ip_selection() {
-    local ip_version_flag=""; [ "$1" = "-6" ] && ip_version_flag="-ipv6"
+    local ip_version_flag=""
+    [ "$1" = "-6" ] && ip_version_flag="-ipv6"
     green "🚀 开始优选 WARP Endpoint IP..."
     /usr/local/bin/warp -t "$WARP_CONNECT_TIMEOUT" ${ip_version_flag} > /dev/null
     if [ -f "result.csv" ]; then
         green "✅ 优选完成，正在处理结果..."
         awk -F, '($2+0) < 50 && $3!="timeout ms" {print $1}' result.csv | sed 's/[[:space:]]//g' | head -n "$BEST_IP_COUNT" > "$BEST_IP_FILE"
-        if [ -s "$BEST_IP_FILE" ]; then green "✅ 已生成包含 $(wc -l < "$BEST_IP_FILE") 个IP的优选列表。"; else red "⚠️ 未能筛选出合适的IP，将使用默认地址。"; echo "engage.cloudflareclient.com:2408" > "$BEST_IP_FILE"; fi
+        if [ -s "$BEST_IP_FILE" ]; then
+            green "✅ 已生成包含 $(wc -l < "$BEST_IP_FILE") 个IP的优选列表。"
+        else
+            red "⚠️ 未能筛选出合适的IP，将使用默认地址。"
+            echo "engage.cloudflareclient.com:2408" > "$BEST_IP_FILE"
+        fi
         rm -f result.csv
     else
-        red "⚠️ 未生成优选结果，将使用默认地址。"; echo "engage.cloudflareclient.com:2408" > "$BEST_IP_FILE"
+        red "⚠️ 未生成优选结果，将使用默认地址。"
+        echo "engage.cloudflareclient.com:2408" > "$BEST_IP_FILE"
     fi
 }
 
-# ==============================================================================
-# 代理和连接核心功能
-# ==============================================================================
-_downwgcf() {
-    yellow "正在清理 WireGuard 接口..."; wg-quick down wgcf >/dev/null 2>&1 || echo "wgcf 接口不存在或已关闭。"; yellow "清理完成。"; exit 0
-}
-
+# ============ WireGuard 连接更新 Endpoint ============
 update_wg_endpoint() {
-    if [ ! -s "$BEST_IP_FILE" ]; then red "❌ 优选IP列表为空！将执行一次紧急IP优选..."; run_ip_selection "$1"; fi
+    if [ ! -s "$BEST_IP_FILE" ]; then
+        red "❌ 优选IP列表为空！将执行一次紧急IP优选..."
+        run_ip_selection "$1"
+    fi
     local random_ip=$(shuf -n 1 "$BEST_IP_FILE")
     green "🔄 已从优选列表随机选择新 Endpoint: $random_ip"
     sed -i "s/^Endpoint = .*$/Endpoint = $random_ip/" /etc/wireguard/wgcf.conf
 }
 
+# ============ 关闭 WireGuard ============
+_downwgcf() {
+    yellow "正在清理 WireGuard 接口..."
+    wg-quick down wgcf >/dev/null 2>&1 || echo "wgcf 接口不存在或已关闭。"
+    yellow "清理完成。"
+}
+
+# ============ 代理启动 ============
 _startProxyServices() {
     if ! pgrep -f "gost" > /dev/null; then
         yellow "starting GOST proxy services..."
@@ -73,6 +112,7 @@ _startProxyServices() {
     fi
 }
 
+# ============ 连接检测 ============
 _check_connection() {
     local check_url="https://www.cloudflare.com/cdn-cgi/trace"
     local curl_opts="-s -m ${HEALTH_CHECK_TIMEOUT}"
@@ -88,29 +128,15 @@ _check_connection() {
     return 1
 }
 
-# ==============================================================================
-# 主运行函数
-# ==============================================================================
+# ============ 主运行函数 ============
 runwgcf() {
     trap '_downwgcf' ERR TERM INT
     yellow "服务初始化..."
-    [ ! -e "wgcf-account.toml" ] && wgcf register --accept-tos
-    [ ! -e "wgcf-profile.conf" ] && wgcf generate
-    cp wgcf-profile.conf /etc/wireguard/wgcf.conf
-    [ "$1" = "-6" ] && sed -i 's/AllowedIPs = 0.0.0.0\/0/#AllowedIPs = 0.0.0.0\/0/' /etc/wireguard/wgcf.conf
-    [ "$1" = "-4" ] && sed -i 's/AllowedIPs = ::\/0/#AllowedIPs = ::\/0/' /etc/wireguard/wgcf.conf
-    [ ! -f "$BEST_IP_FILE" ] && run_ip_selection "$@"
 
-    (
-        while true; do
-            sleep "$OPTIMIZE_INTERVAL"
-            yellow "🔄 [定时任务] 开始更新IP列表..."
-            wg-quick down wgcf >/dev/null 2>&1 || true
-            run_ip_selection "$@"
-            touch "$RECONNECT_FLAG_FILE"
-            yellow "🔄 [定时任务] IP列表更新完成，已发送重连信号。"
-        done
-    ) &
+    # 自动IP优选
+    if [ ! -f "$BEST_IP_FILE" ]; then
+        run_ip_selection "$@"
+    fi
 
     while true; do
         local failure_count=0
@@ -153,8 +179,17 @@ runwgcf() {
     done
 }
 
-# ==============================================================================
-# 脚本入口
-# ==============================================================================
-cd /wgcf
+# ============ 启动定时 IP 优选 ============
+(
+    while true; do
+        sleep "$OPTIMIZE_INTERVAL"
+        yellow "🔄 [定时任务] 开始更新IP列表..."
+        wg-quick down wgcf >/dev/null 2>&1 || true
+        run_ip_selection "$@"
+        touch "$RECONNECT_FLAG_FILE"
+        yellow "🔄 [定时任务] IP列表更新完成，已发送重连信号。"
+    done
+) &
+
+# ============ 运行主函数 ============
 runwgcf "$@"
