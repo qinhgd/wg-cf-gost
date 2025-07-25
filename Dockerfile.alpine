@@ -10,14 +10,14 @@ RUN apk update -f \
   wireguard-tools openresolv tar \
   && rm -rf /var/cache/apk/*
 
-# --- GOST 安装 (从本地 arm64 文件) ---
-COPY gost-linux-arm64.tar.gz /tmp/gost.tar.gz
+COPY gost_3.1.0_linux_arm64.tar.gz /tmp/gost.tar.gz
 RUN set -ex \
     && cd /tmp \
     && tar -xf gost.tar.gz \
-    && mv gost /usr/local/bin/gost \
+    && mv gost/gost /usr/local/bin/gost \
     && chmod +x /usr/local/bin/gost \
     && rm -rf /tmp/*
+
 
 # --- WARP 工具安装 (从本地 arm64 文件) ---
 # 简化：直接复制到目标位置并授权
