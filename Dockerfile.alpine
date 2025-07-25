@@ -14,7 +14,7 @@ COPY gost_3.1.0_linux_arm64.tar.gz /tmp/gost.tar.gz
 RUN set -ex \
     && cd /tmp \
     && tar -xf gost.tar.gz \
-    && mv gost/gost /usr/local/bin/gost \
+    && mv gost /usr/local/bin/gost \
     && chmod +x /usr/local/bin/gost \
     && rm -rf /tmp/*
 
